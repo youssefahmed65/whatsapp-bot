@@ -1,0 +1,12 @@
+{
+  "name": "whatsapp-bot",
+  "version": "1.0.0",
+  "description": "WhatsApp Admin Bot with AI",
+  "main": "index.js",
+  "dependencies": {
+    "whatsapp-web.js": "^1.23.0",
+    "openai": "^4.0.0",
+    "dotenv": "^16.0.0",
+    "qrcode-terminal": "^0.12.0"
+  }
+}
