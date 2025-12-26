@@ -76,4 +76,13 @@ async function startBot() {
     });
 }
 
+// كود تثبيت البوت ومنع Koyeb من إغلاقه
+const http = require('http');
+http.createServer((req, res) => {
+    res.writeHead(200);
+    res.end('Bot is Alive!');
+}).listen(process.env.PORT || 8000);
+
+// تشغيل البوت
 startBot();
+
