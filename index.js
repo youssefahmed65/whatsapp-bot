@@ -1,7 +1,6 @@
 const {
     default: makeWASocket,
     useMultiFileAuthState,
-    delay,
     DisconnectReason,
     fetchLatestBaileysVersion,
     makeCacheableSignalKeyStore
@@ -9,12 +8,11 @@ const {
 const pino = require("pino");
 const { Boom } = require("@hapi/boom");
 
-// رقم هاتفك بالصيغة الدولية الصحيحة بدون علامة +
 const phoneNumber = "201228905645"; 
 
 async function startBot() {
-    // تم تغيير اسم المجلد إلى session_v3 لضمان جلسة ربط جديدة تماماً
-    const { state, saveCreds } = await useMultiFileAuthState('session_v3');
+    // تغيير اسم الفولدر لمرة أخيرة لضمان تصفير الجلسة تماماً
+    const { state, saveCreds } = await useMultiFileAuthState('session_final');
     const { version } = await fetchLatestBaileysVersion();
 
     const sock = makeWASocket({
@@ -25,21 +23,20 @@ async function startBot() {
             creds: state.creds,
             keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" })),
         },
-        // إعدادات المتصفح ضرورية لنجاح الربط بالكود
-        browser: ["Ubuntu", "Chrome", "20.0.0"],
+        // التعديل السحري: جعل الواتساب يعتقد أنك تربط من جهاز Mac
+        browser: ["Mac OS", "Chrome", "10.15.7"],
     });
 
-    // طلب كود الربط إذا لم يكن الجهاز مسجلاً
     if (!sock.authState.creds.registered) {
         setTimeout(async () => {
             try {
+                // طلب الكود بدون أي إضافات يدوية
                 let code = await sock.requestPairingCode(phoneNumber);
-                code = code?.match(/.{1,4}/g)?.join("-") || code;
-                console.log(`\x1b[32m\n=== كود الربط الجديد الخاص بك هو: ${code} ===\n\x1b[0m`);
-            } catch (error) {
-                console.error("خطأ في طلب كود الربط:", error);
+                console.log(`\x1b[32m\n=== الكود الجديد (جربه الآن): ${code} ===\n\x1b[0m`);
+            } catch (err) {
+                console.error("خطأ في الطلب:", err);
             }
-        }, 5000); // زيادة وقت الانتظار قليلاً لضمان استقرار السيرفر
+        }, 5000);
     }
 
     sock.ev.on("creds.update", saveCreds);
@@ -48,28 +45,17 @@ async function startBot() {
         const { connection, lastDisconnect } = update;
         if (connection === "close") {
             const shouldReconnect = (lastDisconnect.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (shouldReconnect) {
-                console.log("إعادة الاتصال...");
-                startBot();
-            }
+            if (shouldReconnect) startBot();
         } else if (connection === "open") {
-            console.log("✅ ✅ تم ربط الواتساب بنجاح! البوت الآن نشط.");
+            console.log("✅ ✅ مبروك! تم الربط بنجاح.");
         }
     });
 
     sock.ev.on("messages.upsert", async (m) => {
         const msg = m.messages[0];
         if (!msg.message || msg.key.fromMe) return;
-        
-        // هنا يمكنك تتبع ID المجموعة لاحقاً من اللوجز
         const from = msg.key.remoteJid;
-        const messageText = msg.message.conversation || msg.message.extendedTextMessage?.text;
-
-        console.log(`رسالة من ${from}: ${messageText}`);
-
-        if (messageText === "ping") {
-            await sock.sendMessage(from, { text: "pong! 🏓" });
-        }
+        console.log(`رسالة من ${from}`); // هذا سيظهر لك الـ ID الخاص بالمجموعة
     });
 }
 
