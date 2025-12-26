@@ -1,62 +1,62 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
-const { Boom } = require('@hapi/boom');
-const OpenAI = require('openai');
+const {
+    default: makeWASocket,
+    useMultiFileAuthState,
+    delay,
+    DisconnectReason,
+    fetchLatestBaileysVersion,
+    makeCacheableSignalKeyStore
+} = require("@whiskeysockets/baileys");
+const pino = require("pino");
+const { Boom } = require("@hapi/boom");
 
-const openai = new OpenAI({
-    apiKey: process.env.OPENAI_API_KEY,
-});
+// رقم هاتفك بالصيغة الصحيحة (بدون + وبدون أصفار في البداية)
+const phoneNumber = "201228905645"; 
 
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('auth_info');
+    const { version } = await fetchLatestBaileysVersion();
 
     const sock = makeWASocket({
-        auth: state,
+        version,
+        logger: pino({ level: "silent" }),
         printQRInTerminal: false, // سنستخدم كود الربط بدلاً من QR
-        browser: ["Ubuntu", "Chrome", "20.0.0"]
+        auth: {
+            creds: state.creds,
+            keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" })),
+        },
+        browser: ["Ubuntu", "Chrome", "20.0.0"],
     });
 
-    // كود الربط - سيظهر في Logs موقع Koyeb
+    // طلب كود الربط إذا لم يكن مسجلاً
     if (!sock.authState.creds.registered) {
-        // تأكد من وضع رقمك هنا بمفتاح الدولة بدون + (مثال: 2010xxxxxxxx)
-        const phoneNumber = "201012345678"; 
         setTimeout(async () => {
-            const code = await sock.requestPairingCode(phoneNumber);
-            console.log(`\n\n=== كود الربط الخاص بك هو: ${code} ===\n\n`);
-        }, 5000);
+            let code = await sock.requestPairingCode(phoneNumber);
+            code = code?.match(/.{1,4}/g)?.join("-") || code;
+            console.log(`\x1b[32m\n=== كود الربط الخاص بك هو: ${code} ===\n\x1b[0m`);
+        }, 3000);
     }
 
-    sock.ev.on('creds.update', saveCreds);
+    sock.ev.on("creds.update", saveCreds);
 
-    sock.ev.on('messages.upsert', async ({ messages, type }) => {
-        if (type !== 'notify') return;
-        const msg = messages[0];
-        if (!msg.message || msg.key.fromMe) return;
-
-        const text = msg.message.conversation || msg.message.extendedTextMessage?.text;
-        if (!text) return;
-
-        const from = msg.key.remoteJid;
-
-        try {
-            const response = await openai.chat.completions.create({
-                model: "gpt-3.5-turbo",
-                messages: [{ role: "user", content: text }],
-            });
-
-            const reply = response.choices[0].message.content;
-            await sock.sendMessage(from, { text: reply }, { quoted: msg });
-        } catch (error) {
-            console.error("خطأ في OpenAI:", error.message);
+    sock.ev.on("connection.update", (update) => {
+        const { connection, lastDisconnect } = update;
+        if (connection === "close") {
+            const shouldReconnect = (lastDisconnect.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
+            console.log("تم قطع الاتصال، جاري إعادة المحاولة...", shouldReconnect);
+            if (shouldReconnect) startBot();
+        } else if (connection === "open") {
+            console.log("✅ تم ربط الواتساب بنجاح! البوت يعمل الآن.");
         }
     });
 
-    sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect } = update;
-        if (connection === 'close') {
-            const shouldReconnect = (lastDisconnect.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
-            if (shouldReconnect) startBot();
-        } else if (connection === 'open') {
-            console.log('✅ البوت متصل الآن وجاهز للرد على الجميع!');
+    // هنا يمكنك إضافة أوامر البوت لاحقاً
+    sock.ev.on("messages.upsert", async (m) => {
+        const msg = m.messages[0];
+        if (!msg.message || msg.key.fromMe) return;
+        
+        const messageText = msg.message.conversation || msg.message.extendedTextMessage?.text;
+        if (messageText === "ping") {
+            await sock.sendMessage(msg.key.remoteJid, { text: "pong! 🏓" });
         }
     });
 }
