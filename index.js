@@ -3,7 +3,7 @@ const qrcode = require('qrcode-terminal');
 const { OpenAI } = require('openai');
 
 // 1. هنا تضع الـ ID الذي نسخته من الـ Logs (تأكد من وجود @g.us)
-const myGroupID = '1203630123456789@g.us'; 
+//const myGroupID = '1203630123456789@g.us'; 
 
 const client = new Client({
     authStrategy: new LocalAuth(),
@@ -37,3 +37,4 @@ client.on('message', async msg => {
 });
 
 client.initialize();
+
