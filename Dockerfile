@@ -1,16 +1,22 @@
+# استخدام نسخة Node.js خفيفة
 FROM node:18-slim
 
-# تثبيت متصفح كروم والاعتمادات اللازمة
+# إنشاء مجلد العمل
+WORKDIR /app
+
+# تثبيت الاعتمادات الأساسية فقط (بدون كروم)
 RUN apt-get update && apt-get install -y \
-    google-chrome-stable \
-    fonts-freefont-ttf \
-    libxss1 \
-    --no-install-recommends \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+# نسخ ملفات الـ package
 COPY package*.json ./
+
+# تثبيت المكتبات
 RUN npm install
+
+# نسخ باقي الملفات
 COPY . .
 
-CMD ["node", "index.js"]
+# تشغيل البوت
+CMD ["npm", "start"]
