@@ -6,26 +6,25 @@ const {
     makeCacheableSignalKeyStore
 } = require("@whiskeysockets/baileys");
 const pino = require("pino");
-const { Boom } = require("@hapi/boom");
+const http = require("http");
 
 // ==========================================
-// إعدادات البوت (تعديلك هنا)
+// 1. الإعدادات الأساسية (تعديلك هنا)
 // ==========================================
-const phoneNumber = "201228905645"; // رقمك
+const phoneNumber = "201228905645"; 
+const targetGroupID = "120363000000000000@g.us"; // استبدله بالـ ID الحقيقي بعد أول رسالة
 
-// في البداية اترك هذا كما هو، وبعد الربط وإرسال رسالة في المجموعة
-// خذ الـ ID من اللوجز وضعه هنا بدلاً من الرقم الموجود
-const targetGroupID = "120363000000000000@g.us"; 
-// ==========================================
+let mutedUsers = new Map();     
+let warningCount = new Map();   
+let insultCounter = new Map();  
 
 async function startBot() {
-    const { state, saveCreds } = await useMultiFileAuthState('session_final');
+    const { state, saveCreds } = await useMultiFileAuthState('session_auth');
     const { version } = await fetchLatestBaileysVersion();
 
     const sock = makeWASocket({
         version,
         logger: pino({ level: "silent" }),
-        printQRInTerminal: false,
         auth: {
             creds: state.creds,
             keys: makeCacheableSignalKeyStore(state.keys, pino({ level: "silent" })),
@@ -33,15 +32,13 @@ async function startBot() {
         browser: ["Mac OS", "Chrome", "10.15.7"],
     });
 
-    // طلب كود الربط لو لسه مخلصتش ربط
+    // إظهار كود الربط
     if (!sock.authState.creds.registered) {
         setTimeout(async () => {
             try {
                 let code = await sock.requestPairingCode(phoneNumber);
                 console.log(`\x1b[32m\n=== كود الربط الخاص بك: ${code} ===\n\x1b[0m`);
-            } catch (err) {
-                console.error("خطأ في الطلب:", err);
-            }
+            } catch (err) { console.error("خطأ في طلب الكود:", err); }
         }, 5000);
     }
 
@@ -49,11 +46,10 @@ async function startBot() {
 
     sock.ev.on("connection.update", (update) => {
         const { connection, lastDisconnect } = update;
+        if (connection === "open") console.log("✅ تم الاتصال بنجاح! البوت الآن يراقب المجموعة.");
         if (connection === "close") {
-            const shouldReconnect = (lastDisconnect.error instanceof Boom)?.output?.statusCode !== DisconnectReason.loggedOut;
+            const shouldReconnect = (lastDisconnect.error)?.output?.statusCode !== DisconnectReason.loggedOut;
             if (shouldReconnect) startBot();
-        } else if (connection === "open") {
-            console.log("✅ ✅ تم الاتصال بنجاح! السيرفر الآن يراقب الرسائل.");
         }
     });
 
@@ -62,27 +58,24 @@ async function startBot() {
         if (!msg.message || msg.key.fromMe) return;
         
         const from = msg.key.remoteJid;
-        const messageText = msg.message.conversation || msg.message.extendedTextMessage?.text;
+        const sender = msg.key.participant || msg.key.remoteJid;
+        const messageText = (msg.message.conversation || msg.message.extendedTextMessage?.text || "").toLowerCase().trim();
 
-        // السطر ده هو اللي هيخليك تشوف الـ ID في الـ Logs
-        console.log(`[رسالة جديدة] من: ${from} | النص: ${messageText}`);
+        // طباعة اللوجز لمعرفة الـ ID
+        console.log(`[رسالة] من: ${from} | النص: ${messageText}`);
 
-        // البوت هيرد "فقط" لو الـ ID اللي فوق صح
         if (from === targetGroupID) {
-            if (messageText === "بوت") {
-                await sock.sendMessage(from, { text: "أنا شغال وبسمع أوامرك في المجموعة دي! 🫡" });
+            const groupMetadata = await sock.groupMetadata(from);
+            const isAdmin = groupMetadata.participants.find(p => p.id === sender)?.admin;
+
+            // 1. مسح رسائل المكتومين
+            if (mutedUsers.has(sender)) {
+                await sock.sendMessage(from, { delete: msg.key });
+                return;
             }
-        }
-    });
-}
 
-// كود تثبيت البوت ومنع Koyeb من إغلاقه
-const http = require('http');
-http.createServer((req, res) => {
-    res.writeHead(200);
-    res.end('Bot is Alive!');
-}).listen(process.env.PORT || 8000);
-
-// تشغيل البوت
-startBot();
-
+            // 2. نظام الشتائم (3 محاولات = 1 إنذار) - لغير المشرفين
+            const badWords = ["شتم", "حيوان", "وسخ", "كلب", "غبي", "زفت"]; 
+            if (badWords.some(word => messageText.includes(word)) && !isAdmin) {
+                await sock.sendMessage(from, { delete: msg.key });
+                let insults = (insultCounter.get(sender)
